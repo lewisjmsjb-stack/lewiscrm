@@ -79,7 +79,11 @@ async function startServer() {
   app.use(express.json({ limit: '20mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ ok: true, model: MODEL_NAME });
+    res.json({
+      ok: true,
+      model: MODEL_NAME,
+      emailConfigured: Boolean(process.env.BREVO_API_KEY || process.env.RESEND_API_KEY),
+    });
   });
 
   const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number }>();
@@ -458,8 +462,8 @@ async function startServer() {
     }
   });
 
-  app.all('/api/{*splat}', (_req: Request, res: Response) => {
-    res.status(404).json({ error: 'API route not found. Please restart the server.' });
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({ error: 'API route not found. Please restart the server runtime.' });
   });
 
   if (process.env.NODE_ENV !== 'production') {

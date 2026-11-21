@@ -110,6 +110,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
+  const [backendWarning, setBackendWarning] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    fetch('/api/health')
+      .then(async (res) => {
+        const raw = await res.text();
+        if (!res.ok || raw.trim().startsWith('<')) {
+          throw new Error('Not JSON');
+        }
+        const data = JSON.parse(raw);
+        if (isMounted) {
+          if (!data.emailConfigured) {
+            setBackendWarning('Email key missing — add BREVO_API_KEY in Settings > Secrets');
+          } else {
+            setBackendWarning(null);
+          }
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setBackendWarning('Backend server needs restart — click Restart in AI Studio preview');
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const switchMode = (newMode: AuthMode) => {
     setMode(newMode);
@@ -355,6 +383,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+        {backendWarning && (
+          <div className="flex items-center gap-2 p-3 rounded-2xl bg-amber-950/80 border border-amber-800 text-xs text-amber-200">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{backendWarning}</span>
+          </div>
+        )}
+
         {/* Brand Header */}
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center mx-auto shadow-lg shadow-blue-600/30">
