@@ -458,6 +458,10 @@ async function startServer() {
     }
   });
 
+  app.all('/api/{*splat}', (_req: Request, res: Response) => {
+    res.status(404).json({ error: 'API route not found. Please restart the server.' });
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

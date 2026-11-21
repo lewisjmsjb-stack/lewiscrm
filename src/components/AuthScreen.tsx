@@ -25,6 +25,52 @@ interface AuthScreenProps {
 
 type AuthMode = 'signin' | 'signup' | 'forgot';
 
+async function postJson(url: string, body: unknown): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('Server is restarting or unreachable. Please click Restart/Reload on the AI Studio preview and try again.');
+  }
+
+  const raw = await res.text();
+  let data: any;
+  try {
+    if (!raw || raw.trim().startsWith('<')) {
+      throw new Error('Server is restarting or unreachable. Please click Restart/Reload on the AI Studio preview and try again.');
+    }
+    data = JSON.parse(raw);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Server is restarting')) {
+      throw err;
+    }
+    throw new Error('Server is restarting or unreachable. Please click Restart/Reload on the AI Studio preview and try again.');
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed with status ${res.status}`);
+  }
+  return data;
+}
+
+function validateEmailFormat(email: string): string | null {
+  const trimmed = email.trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
+  if (!emailRegex.test(trimmed)) {
+    return 'Please enter a valid email address.';
+  }
+  const domain = trimmed.split('@')[1] || '';
+  if (domain.endsWith('.con') || domain.endsWith('.cm') || domain.endsWith('.coom') || domain.endsWith('.cmo')) {
+    const typoExt = domain.slice(domain.lastIndexOf('.'));
+    return `Email domain looks like a typo (${typoExt}). Did you mean .com?`;
+  }
+  return null;
+}
+
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   users,
   onLoginSuccess,
@@ -126,8 +172,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setErrorMsg('Full name is required.');
       return;
     }
-    if (!email || !email.includes('@')) {
-      setErrorMsg('A valid email address is required for registration and OTP verification.');
+    const emailError = validateEmailFormat(email);
+    if (emailError) {
+      setErrorMsg(emailError);
       return;
     }
     if (!validatePassword(signUpPassword)) {
@@ -147,15 +194,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to send verification code.');
-      }
+      const data = await postJson('/api/auth/send-otp', { email });
 
       const passwordHash = await hashPassword(signUpPassword);
       const isManagerReq = signUpRoleChoice === 'Manager';
@@ -199,14 +238,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: pendingVerifyEmail, code }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.verified) {
-        throw new Error(data.error || 'Invalid or expired verification code.');
+      const data = await postJson('/api/auth/verify-otp', { email: pendingVerifyEmail, code });
+      if (!data.verified) {
+        throw new Error('Invalid or expired verification code.');
       }
 
       const verifiedUser: AppUser = {
@@ -253,15 +287,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: matchedUser.email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to send OTP.');
-      }
+      const data = await postJson('/api/auth/send-otp', { email: matchedUser.email });
 
       setPendingForgotUserId(matchedUser.id);
       setPendingVerifyEmail(matchedUser.email);
@@ -288,14 +314,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: pendingVerifyEmail, code }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.verified) {
-        throw new Error(data.error || 'Invalid or expired verification code.');
+      const data = await postJson('/api/auth/verify-otp', { email: pendingVerifyEmail, code });
+      if (!data.verified) {
+        throw new Error('Invalid or expired verification code.');
       }
 
       const newHash = await hashPassword(forgotNewPassword);
@@ -322,19 +343,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: pendingVerifyEmail }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setSuccessMsg(`New verification code sent to ${maskedEmail || pendingVerifyEmail}.`);
-      } else {
-        setErrorMsg(data.error || 'Failed to resend code.');
-      }
-    } catch {
-      setErrorMsg('Failed to resend code.');
+      await postJson('/api/auth/send-otp', { email: pendingVerifyEmail });
+      setSuccessMsg(`New verification code sent to ${maskedEmail || pendingVerifyEmail}.`);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to resend code.');
     } finally {
       setIsLoading(false);
     }
