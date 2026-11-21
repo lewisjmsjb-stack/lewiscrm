@@ -108,18 +108,37 @@ export async function analyzeUploadedDocument(params: {
   fileName?: string;
   question?: string;
 }): Promise<DocumentAnalysisResult> {
-  const response = await fetch('/api/analyze-document', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/analyze-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error('Backend server needs restart to activate /api/analyze-document. Click Restart/Reload in the AI Studio preview toolbar and try again.');
+  }
 
-  const data = (await response.json().catch(() => ({}))) as Partial<DocumentAnalysisResult> & {
-    error?: string;
-  };
+  const raw = await response.text();
+  let data: any;
+  try {
+    if (!raw || raw.trim().startsWith('<')) {
+      throw new Error('Backend server needs restart to activate /api/analyze-document. Click Restart/Reload in the AI Studio preview toolbar and try again.');
+    }
+    data = JSON.parse(raw);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Backend server needs restart')) {
+      throw err;
+    }
+    throw new Error('Backend server needs restart to activate /api/analyze-document. Click Restart/Reload in the AI Studio preview toolbar and try again.');
+  }
 
   if (!response.ok) {
-    throw new Error(data.error || `Document analysis failed (${response.status}).`);
+    throw new Error(data.error || 'Document analysis failed');
+  }
+
+  if (!data.summary && !data.answer && (!data.extractedFields || data.extractedFields.length === 0)) {
+    throw new Error('AI returned an empty analysis. Try asking a specific question or uploading a clearer PDF/image.');
   }
 
   return {

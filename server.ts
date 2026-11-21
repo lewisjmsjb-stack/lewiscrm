@@ -497,10 +497,15 @@ async function startServer() {
       }
 
       const promptLines = [
-        `You are an expert AI document and image analyzer for a commercial vehicle and cold-chain sales manager (Lewis Sales Assistant).`,
-        `Analyze the attached document or image thoroughly (supporting both English and Chinese 简体中文/繁體中文).`,
-        question ? `User specific question or instruction: "${question.trim()}"` : `Provide a comprehensive analysis of the document/image, extracting key commercial facts, vehicle/reefer specs, pricing, dates, and risks.`,
-        `STRICT COMPLIANCE RED LINE: Only report facts, prices, dates, UENs, plate numbers, and technical specs visibly present in the uploaded file. NEVER guess, estimate, or fabricate missing numbers or specs—write "Not seen" if something is absent.`,
+        `You are an expert AI multimodal document, engineering drawing, and image analyzer for a commercial vehicle and cold-chain sales manager (Lewis Sales Assistant).`,
+        `Thoroughly read and analyze the attached multi-page PDF, technical drawing, quotation, ACRA BizFile, LTA log card, or photo (supporting both English and Chinese 简体中文/繁體中文).`,
+        `Specifically inspect and interpret:`,
+        `1. AutoCAD / engineering body drawings, vehicle layout diagrams, title blocks, drawing numbers, internal/external dimensions, materials, and canopy/reefer insulation specs.`,
+        `2. Quotations, contracts, invoices, specifications, and commercial terms.`,
+        question ? `User specific question or instruction: "${question.trim()}"` : `Provide a comprehensive analysis of the document/drawing/image.`,
+        `STRICT COMPLIANCE & DETAIL REQUIREMENTS:`,
+        `- summary must ALWAYS be populated with at least 2–3 concrete sentences describing in detail what is visible or stated in the file.`,
+        `- Only report facts, prices, dates, UENs, plate numbers, dimensions, and technical specs visibly present. Never guess, estimate, or fabricate missing numbers or specs—write "Not seen" if something is absent.`,
       ];
 
       parts.push({ text: promptLines.join('\n') });
@@ -522,7 +527,7 @@ async function startServer() {
                 },
                 summary: {
                   type: Type.STRING,
-                  description: 'Clear, concise summary of what the document or image shows.',
+                  description: 'Clear, concise summary (at least 2-3 concrete sentences) of what the document or image shows.',
                 },
                 answer: {
                   type: Type.STRING,
@@ -538,7 +543,7 @@ async function startServer() {
                     },
                     required: ['label', 'value'],
                   },
-                  description: 'Key-value pairs covering company names, UEN, contact persons, phone numbers, plate numbers, vehicle/reefer models, prices, payment terms, and expiry dates found.',
+                  description: 'Key-value pairs covering company names, UEN, contact persons, phone numbers, plate numbers, vehicle/reefer models, prices, payment terms, dimensions, and expiry dates found.',
                 },
                 risksAndFlags: {
                   type: Type.ARRAY,
@@ -556,7 +561,15 @@ async function startServer() {
         })
       );
 
-      const rawText = (response.text ?? '{}').trim();
+      const rawText = (response.text ?? '').trim();
+      if (!rawText || rawText === '{}') {
+        const finishReason = (response as any).candidates?.[0]?.finishReason;
+        res.status(502).json({
+          error: 'Gemini could not extract text from this file (reason: ' + (finishReason || 'empty response') + '). Try converting the page to PNG/JPG or uploading a smaller PDF.',
+        });
+        return;
+      }
+
       let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(rawText);
