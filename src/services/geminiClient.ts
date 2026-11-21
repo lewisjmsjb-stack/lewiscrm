@@ -23,10 +23,14 @@ export async function extractBusinessCardOcr(
 
   return {
     fullName: data.fullName || '',
+    chineseName: data.chineseName || '',
     companyName: data.companyName || '',
+    chineseCompanyName: data.chineseCompanyName || '',
     title: data.title || '',
     phone: data.phone || '',
+    secondaryPhone: data.secondaryPhone || '',
     email: data.email || '',
+    uen: data.uen || '',
     address: data.address || '',
     notes: data.notes || '',
   };

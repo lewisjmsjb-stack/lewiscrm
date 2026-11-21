@@ -82,6 +82,48 @@ async function startServer() {
     res.json({ ok: true, model: MODEL_NAME });
   });
 
+  app.post('/api/auth/send-otp', async (req: Request, res: Response) => {
+    const { identifier } = req.body as { identifier?: string };
+    if (!identifier || typeof identifier !== 'string' || !identifier.trim()) {
+      res.status(400).json({ error: 'Missing identifier (email or phone).' });
+      return;
+    }
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const isEmail = identifier.includes('@');
+    const resendApiKey = process.env.RESEND_API_KEY;
+
+    if (isEmail && resendApiKey && resendApiKey !== 'MY_RESEND_API_KEY') {
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resendApiKey}`,
+          },
+          body: JSON.stringify({
+            from: 'Lewis Sales Assistant <onboarding@resend.dev>',
+            to: [identifier.trim()],
+            subject: 'Your Lewis Sales Assistant Verification Code',
+            html: `<p>Your 6-digit verification code is: <strong>${otpCode}</strong></p><p>This code expires in 15 minutes.</p>`,
+          }),
+        });
+        if (!response.ok) {
+          console.warn('Resend email delivery failed, falling back to prototype mode:', await response.text());
+        }
+      } catch (err) {
+        console.warn('Resend email request error:', err);
+      }
+    }
+
+    res.json({
+      success: true,
+      otpCode,
+      expiresAt,
+      mode: isEmail && resendApiKey && resendApiKey !== 'MY_RESEND_API_KEY' ? 'resend' : 'prototype',
+    });
+  });
+
   app.post('/api/ocr-card', async (req: Request, res: Response) => {
     try {
       const { imageBase64, mimeType } = req.body as {
@@ -134,9 +176,17 @@ async function startServer() {
                   type: Type.STRING,
                   description: 'Full name of the person on the business card, or empty string if absent.',
                 },
+                chineseName: {
+                  type: Type.STRING,
+                  description: 'Chinese characters name if present, or empty string if absent.',
+                },
                 companyName: {
                   type: Type.STRING,
                   description: 'Company or organization name, or empty string if absent.',
+                },
+                chineseCompanyName: {
+                  type: Type.STRING,
+                  description: 'Chinese company name if present, or empty string if absent.',
                 },
                 title: {
                   type: Type.STRING,
@@ -146,9 +196,17 @@ async function startServer() {
                   type: Type.STRING,
                   description: 'Primary mobile or direct phone number as printed, or empty string if absent.',
                 },
+                secondaryPhone: {
+                  type: Type.STRING,
+                  description: 'Office direct line, fax, or secondary phone number if present, or empty string if absent.',
+                },
                 email: {
                   type: Type.STRING,
                   description: 'Email address as printed, or empty string if absent.',
+                },
+                uen: {
+                  type: Type.STRING,
+                  description: 'Company UEN or business registration number if printed, or empty string if absent.',
                 },
                 address: {
                   type: Type.STRING,
@@ -156,10 +214,22 @@ async function startServer() {
                 },
                 notes: {
                   type: Type.STRING,
-                  description: 'Secondary phone/office line, UEN, website, services, or handwritten notes visibly printed on the card.',
+                  description: 'Website, services, or handwritten notes visibly printed on the card.',
                 },
               },
-              required: ['fullName', 'companyName', 'title', 'phone', 'email', 'address', 'notes'],
+              required: [
+                'fullName',
+                'chineseName',
+                'companyName',
+                'chineseCompanyName',
+                'title',
+                'phone',
+                'secondaryPhone',
+                'email',
+                'uen',
+                'address',
+                'notes',
+              ],
             },
           },
         })
@@ -177,10 +247,16 @@ async function startServer() {
 
       res.json({
         fullName: typeof parsed.fullName === 'string' ? parsed.fullName.trim() : '',
+        chineseName: typeof parsed.chineseName === 'string' ? parsed.chineseName.trim() : '',
         companyName: typeof parsed.companyName === 'string' ? parsed.companyName.trim() : '',
+        chineseCompanyName:
+          typeof parsed.chineseCompanyName === 'string' ? parsed.chineseCompanyName.trim() : '',
         title: typeof parsed.title === 'string' ? parsed.title.trim() : '',
         phone: typeof parsed.phone === 'string' ? parsed.phone.trim() : '',
+        secondaryPhone:
+          typeof parsed.secondaryPhone === 'string' ? parsed.secondaryPhone.trim() : '',
         email: typeof parsed.email === 'string' ? parsed.email.trim() : '',
+        uen: typeof parsed.uen === 'string' ? parsed.uen.trim() : '',
         address: typeof parsed.address === 'string' ? parsed.address.trim() : '',
         notes: typeof parsed.notes === 'string' ? parsed.notes.trim() : '',
       });

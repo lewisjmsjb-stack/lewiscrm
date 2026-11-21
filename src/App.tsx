@@ -5,11 +5,14 @@ import {
   ClipboardList,
   Database,
   Loader2,
+  LogOut,
+  Shield,
   Users,
 } from 'lucide-react';
 import {
   ActiveTab,
   AppState,
+  AppUser,
   Customer,
   FollowUp,
   FollowUpChannel,
@@ -23,9 +26,13 @@ import { CustomersView } from './components/CustomersView';
 import { CustomerDetailView } from './components/CustomerDetailView';
 import { DataView } from './components/DataView';
 import { FollowUpModal } from './components/FollowUpModal';
+import { AuthScreen } from './components/AuthScreen';
+import { UserManagementView } from './components/UserManagementView';
 
 export default function App() {
   const [state, setState] = useState<AppState>({
+    users: [],
+    currentUserId: null,
     customers: [],
     followUps: [],
     expiryActions: {},
@@ -43,7 +50,7 @@ export default function App() {
     nextStep?: string;
   }>({});
 
-  // Initial load from IndexedDB (with localStorage migration and seed fallback)
+  // Initial load from IndexedDB
   useEffect(() => {
     let isMounted = true;
     loadAppStateFromIDB()
@@ -65,7 +72,7 @@ export default function App() {
     };
   }, []);
 
-  // Save state to IndexedDB whenever state updates (after initial hydration)
+  // Save state to IndexedDB whenever state updates
   useEffect(() => {
     if (isHydrating) return;
     saveAppStateToIDB(state).catch(() => {
@@ -81,6 +88,30 @@ export default function App() {
   }, [toastMessage]);
 
   const showToast = (msg: string) => setToastMessage(msg);
+
+  const currentUser = state.users.find((u) => u.id === state.currentUserId) || null;
+
+  // Data scoping for Employee vs Admin/Manager
+  const visibleCustomers = React.useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'Admin' || currentUser.role === 'Manager') {
+      return state.customers;
+    }
+    // Employee: records owned by them or unassigned
+    return state.customers.filter(
+      (c) => !c.ownerUserId || c.ownerUserId === currentUser.id
+    );
+  }, [state.customers, currentUser]);
+
+  const visibleFollowUps = React.useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'Admin' || currentUser.role === 'Manager') {
+      return state.followUps;
+    }
+    return state.followUps.filter(
+      (f) => !f.ownerUserId || f.ownerUserId === currentUser.id
+    );
+  }, [state.followUps, currentUser]);
 
   const openCustomer360 = (customerId: string) => {
     setSelectedCustomerId(customerId);
@@ -98,6 +129,78 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleLoginSuccess = (userId: string) => {
+    setState((prev) => ({ ...prev, currentUserId: userId }));
+    showToast('Signed in successfully.');
+  };
+
+  const handleLogout = () => {
+    setState((prev) => ({ ...prev, currentUserId: null }));
+    setActiveTab('today');
+    setSelectedCustomerId(null);
+    showToast('Logged out.');
+  };
+
+  const handleRegisterUser = (newUser: AppUser) => {
+    setState((prev) => ({
+      ...prev,
+      users: [...prev.users, newUser],
+    }));
+    showToast('Registration successful.');
+  };
+
+  const handleUpdatePassword = (userId: string, newPasswordHash: string) => {
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.map((u) => (u.id === userId ? { ...u, passwordHash: newPasswordHash } : u)),
+    }));
+    showToast('Password updated.');
+  };
+
+  const handleUpdateUser = (updatedUser: AppUser) => {
+    if (currentUser?.role !== 'Admin') {
+      showToast('Unauthorized: Admin access required.');
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.map((u) => (u.id === updatedUser.id ? updatedUser : u)),
+    }));
+  };
+
+  const handleAdminCreateUser = (newUser: AppUser) => {
+    if (currentUser?.role !== 'Admin') {
+      showToast('Unauthorized: Admin access required.');
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      users: [...prev.users, newUser],
+    }));
+  };
+
+  const handleAdminDeleteUser = (userId: string) => {
+    if (currentUser?.role !== 'Admin') {
+      showToast('Unauthorized: Admin access required.');
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.filter((u) => u.id !== userId),
+    }));
+  };
+
+  const handleAdminResetPassword = (userId: string, newHash: string) => {
+    if (currentUser?.role !== 'Admin') {
+      showToast('Unauthorized: Admin access required.');
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.map((u) => (u.id === userId ? { ...u, passwordHash: newHash } : u)),
+    }));
+  };
+
   const handleOpenNewFollowUp = (prefill?: {
     customerId?: string;
     channel?: FollowUpChannel;
@@ -108,9 +211,13 @@ export default function App() {
   };
 
   const handleSaveFollowUp = (fu: FollowUp) => {
+    const ownerFu: FollowUp = {
+      ...fu,
+      ownerUserId: currentUser?.id,
+    };
     setState((prev) => ({
       ...prev,
-      followUps: [fu, ...prev.followUps],
+      followUps: [ownerFu, ...prev.followUps],
     }));
     showToast('Follow-up saved.');
   };
@@ -175,9 +282,13 @@ export default function App() {
   };
 
   const handleAddCustomer = (customer: Customer) => {
+    const ownerCust: Customer = {
+      ...customer,
+      ownerUserId: currentUser?.id,
+    };
     setState((prev) => ({
       ...prev,
-      customers: [customer, ...prev.customers],
+      customers: [ownerCust, ...prev.customers],
     }));
     showToast(`Added ${customer.companyName}.`);
   };
@@ -271,6 +382,7 @@ export default function App() {
     const newCustomerId = generateId('cust');
     const newCustomer: Customer = {
       id: newCustomerId,
+      ownerUserId: currentUser?.id,
       companyName:
         payload.companyName || (payload.fullName ? `${payload.fullName} (Lead)` : 'New Prospect'),
       uen: '',
@@ -356,7 +468,6 @@ export default function App() {
         }
       }
 
-      // Create new account or attach contact to existing company by name with duplicate contact check
       const existingCompany = nextCustomers.find(
         (c) =>
           c.companyName.trim().toLowerCase() === row.companyName.trim().toLowerCase()
@@ -405,6 +516,7 @@ export default function App() {
       } else {
         nextCustomers.unshift({
           id: generateId('cust'),
+          ownerUserId: currentUser?.id,
           companyName: row.companyName,
           uen: row.uen,
           address: row.address,
@@ -448,10 +560,14 @@ export default function App() {
   };
 
   const handleResetSampleData = () => {
-    // Import createSeedState dynamically or load
     import('./data/seedData').then(({ createSeedState }) => {
       const seed = createSeedState();
-      setState(seed);
+      setState((prev) => ({
+        ...prev,
+        customers: seed.customers,
+        followUps: seed.followUps,
+        expiryActions: {},
+      }));
       setSelectedCustomerId(null);
       showToast('Sample fleet CRM data restored.');
     });
@@ -468,8 +584,20 @@ export default function App() {
     );
   }
 
+  // If no user logged in, show AuthScreen
+  if (!currentUser) {
+    return (
+      <AuthScreen
+        users={state.users}
+        onLoginSuccess={handleLoginSuccess}
+        onRegisterUser={handleRegisterUser}
+        onUpdatePassword={handleUpdatePassword}
+      />
+    );
+  }
+
   const selectedCustomer = selectedCustomerId
-    ? state.customers.find((c) => c.id === selectedCustomerId) || null
+    ? visibleCustomers.find((c) => c.id === selectedCustomerId) || null
     : null;
 
   const navItems: Array<{
@@ -496,6 +624,16 @@ export default function App() {
       mobileLabel: 'Customers',
       icon: <Users className="w-5 h-5" />,
     },
+    ...(currentUser.role === 'Admin'
+      ? [
+          {
+            id: 'users' as ActiveTab,
+            label: 'Users',
+            mobileLabel: 'Users',
+            icon: <Shield className="w-5 h-5" />,
+          },
+        ]
+      : []),
     {
       id: 'data',
       label: 'Import & Export',
@@ -506,10 +644,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-      {/* Desktop Top Bar (3-zone contract) + Compact Mobile Header */}
+      {/* Desktop Top Bar (3-zone contract) + User Badge & Logout */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-8">
-          {/* Zone 1: Single-line Brand Wordmark */}
+          {/* Zone 1: Brand Wordmark */}
           <button
             type="button"
             onClick={() => handleTabChange('today')}
@@ -518,7 +656,7 @@ export default function App() {
             Lewis Sales Assistant
           </button>
 
-          {/* Zone 2: Desktop Single-line Text Navigation Links */}
+          {/* Zone 2: Navigation Links */}
           <nav className="hidden md:flex items-center gap-7" aria-label="Primary navigation">
             {navItems.map((item) => {
               const isActive = activeTab === item.id;
@@ -539,8 +677,27 @@ export default function App() {
             })}
           </nav>
 
-          {/* Zone 3: Single Primary Action */}
-          <div className="shrink-0">
+          {/* Zone 3: User Badge + Log Out + Scan CTA */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs">
+              <span className="font-bold text-slate-900">{currentUser.fullName}</span>
+              <span className="text-slate-400">·</span>
+              <span className="font-semibold text-blue-700">
+                {currentUser.role}
+                {currentUser.department ? ` (${currentUser.department})` : ''}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="min-h-[40px] px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              title="Log out"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+
             <button
               type="button"
               onClick={() => handleTabChange('scan')}
@@ -557,8 +714,8 @@ export default function App() {
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 pt-5 pb-24 md:py-8">
         {activeTab === 'today' && (
           <TodayView
-            customers={state.customers}
-            followUps={state.followUps}
+            customers={visibleCustomers}
+            followUps={visibleFollowUps}
             expiryActions={state.expiryActions}
             onOpenScan={() => handleTabChange('scan')}
             onOpenCustomer={openCustomer360}
@@ -572,7 +729,7 @@ export default function App() {
 
         {activeTab === 'scan' && (
           <ScanCardView
-            customers={state.customers}
+            customers={visibleCustomers}
             onSaveCard={handleSaveScannedCard}
             onOpenCustomer={openCustomer360}
           />
@@ -580,7 +737,7 @@ export default function App() {
 
         {activeTab === 'customers' && !selectedCustomer && (
           <CustomersView
-            customers={state.customers}
+            customers={visibleCustomers}
             onSelectCustomer={(id) => setSelectedCustomerId(id)}
             onAddCustomer={handleAddCustomer}
             onOpenNewFollowUp={handleOpenNewFollowUp}
@@ -590,8 +747,8 @@ export default function App() {
         {activeTab === 'customers' && selectedCustomer && (
           <CustomerDetailView
             customer={selectedCustomer}
-            allCustomers={state.customers}
-            followUps={state.followUps}
+            allCustomers={visibleCustomers}
+            followUps={visibleFollowUps}
             onBack={() => setSelectedCustomerId(null)}
             onUpdateCustomer={handleUpdateCustomer}
             onOpenNewFollowUp={handleOpenNewFollowUp}
@@ -599,21 +756,33 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'users' && currentUser.role === 'Admin' && (
+          <UserManagementView
+            currentUser={currentUser}
+            users={state.users}
+            onUpdateUser={handleUpdateUser}
+            onCreateUser={handleAdminCreateUser}
+            onDeleteUser={handleAdminDeleteUser}
+            onResetPassword={handleAdminResetPassword}
+            showToast={showToast}
+          />
+        )}
+
         {activeTab === 'data' && (
           <DataView
-            state={state}
+            state={{ ...state, customers: visibleCustomers, followUps: visibleFollowUps }}
             onCommitCsvImport={handleCommitCsvImport}
             onResetSampleData={handleResetSampleData}
           />
         )}
       </main>
 
-      {/* Mobile Fixed Bottom Navigation Bar (4 evenly distributed thumb targets) */}
+      {/* Mobile Fixed Bottom Navigation Bar */}
       <nav
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 pb-safe"
         aria-label="Mobile bottom navigation"
       >
-        <div className="grid grid-cols-4 h-16">
+        <div className={`grid grid-cols-${navItems.length} h-16`}>
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -638,7 +807,7 @@ export default function App() {
       {/* Log Follow-Up Modal */}
       <FollowUpModal
         isOpen={followUpModalOpen}
-        customers={state.customers}
+        customers={visibleCustomers}
         initialCustomerId={followUpPrefill.customerId}
         initialChannel={followUpPrefill.channel}
         initialNextStep={followUpPrefill.nextStep}

@@ -5,6 +5,8 @@ export function createSeedState(): AppState {
   const today = getTodayIso();
 
   return {
+    users: [],
+    currentUserId: null,
     customers: [
       {
         id: 'cust_pacific_cold',

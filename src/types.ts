@@ -37,11 +37,46 @@ export type ExpiryUrgency =
   | 'Scheduled'
   | 'Not seen';
 
+export type UserRole = 'Admin' | 'Manager' | 'Employee';
+
+export type ManagerDepartment =
+  | 'Sales Manager'
+  | 'Marketing Manager'
+  | 'HR Manager'
+  | 'Accountant'
+  | 'Customer Follow-Up Manager';
+
+export interface AppUser {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  passwordHash: string;
+  role: UserRole;
+  department?: ManagerDepartment;
+  requestedRole?: UserRole;
+  requestedDepartment?: ManagerDepartment;
+  verified: boolean;
+  status: 'Active' | 'Pending' | 'Suspended';
+  createdAt: string;
+}
+
+export interface UserProfile {
+  fullName: string;
+  chineseName?: string;
+  title: string;
+  companyName: string;
+  phone: string;
+  email: string;
+}
+
 export interface Contact {
   id: string;
   fullName: string;
+  chineseName?: string;
   title: string;
   phone: string;
+  secondaryPhone?: string;
   email: string;
   isDecisionMaker: boolean;
   cardImageDataUrl?: string;
@@ -68,13 +103,18 @@ export interface Vehicle {
 
 export interface Customer {
   id: string;
+  ownerUserId?: string;
   companyName: string;
+  chineseCompanyName?: string;
   uen: string;
   address: string;
   area: AreaZone;
   industry: string;
   business: string;
   fleetSize: string;
+  competitorBrand?: string;
+  parentCompany?: string;
+  paymentTerms?: string;
   grade: CustomerGrade;
   status: CustomerStatus;
   riskLight: RiskLight;
@@ -89,6 +129,7 @@ export interface Customer {
 
 export interface FollowUp {
   id: string;
+  ownerUserId?: string;
   customerId: string;
   contactId?: string;
   channel: FollowUpChannel;
@@ -109,6 +150,9 @@ export interface ExpiryTaskAction {
 }
 
 export interface AppState {
+  userProfile?: UserProfile;
+  users: AppUser[];
+  currentUserId: string | null;
   customers: Customer[];
   followUps: FollowUp[];
   expiryActions: Record<string, ExpiryTaskAction>;
@@ -116,10 +160,14 @@ export interface AppState {
 
 export interface OcrCardResult {
   fullName: string;
+  chineseName?: string;
   companyName: string;
+  chineseCompanyName?: string;
   title: string;
   phone: string;
+  secondaryPhone?: string;
   email: string;
+  uen?: string;
   address: string;
   notes: string;
 }
@@ -153,7 +201,7 @@ export interface VehicleExpiryItem {
   primaryContactName: string;
 }
 
-export type ActiveTab = 'today' | 'scan' | 'customers' | 'data';
+export type ActiveTab = 'today' | 'scan' | 'customers' | 'users' | 'data';
 
 export const AREAS: AreaZone[] = [
   'Jurong',
