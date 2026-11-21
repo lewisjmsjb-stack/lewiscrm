@@ -82,18 +82,54 @@ async function startServer() {
     res.json({ ok: true, model: MODEL_NAME });
   });
 
+  const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number }>();
+
   app.post('/api/auth/send-otp', async (req: Request, res: Response) => {
-    const { identifier } = req.body as { identifier?: string };
-    if (!identifier || typeof identifier !== 'string' || !identifier.trim()) {
-      res.status(400).json({ error: 'Missing identifier (email or phone).' });
+    const { email: rawEmail } = req.body as { email?: string; identifier?: string };
+    const email = (rawEmail || (req.body as { identifier?: string }).identifier || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: 'Valid email address is required.' });
       return;
     }
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 15 * 60 * 1000;
-    const isEmail = identifier.includes('@');
-    const resendApiKey = process.env.RESEND_API_KEY;
 
-    if (isEmail && resendApiKey && resendApiKey !== 'MY_RESEND_API_KEY') {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    otpStore.set(email, { code, expiresAt, attempts: 0 });
+
+    const brevoApiKey = process.env.BREVO_API_KEY;
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const emailFrom = process.env.EMAIL_FROM || 'lewis.jmsjb@gmail.com';
+
+    let emailSent = false;
+    let emailErrorMsg = '';
+
+    if (brevoApiKey && brevoApiKey !== 'MY_BREVO_API_KEY') {
+      try {
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'api-key': brevoApiKey,
+          },
+          body: JSON.stringify({
+            sender: { name: 'Lewis Sales Assistant', email: emailFrom },
+            to: [{ email }],
+            subject: 'Your Lewis Sales Assistant Verification Code',
+            htmlContent: `<div style="font-family:sans-serif;padding:20px;background:#f8fafc;border-radius:12px;"><h2>Verification Code</h2><p>Your 6-digit verification code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px;color:#2563eb;">${code}</p><p>This code expires in 10 minutes. If you did not request this, please ignore.</p></div>`,
+          }),
+        });
+        if (response.ok) {
+          emailSent = true;
+        } else {
+          emailErrorMsg = await response.text();
+          console.warn('Brevo email delivery failed:', emailErrorMsg);
+        }
+      } catch (err) {
+        console.warn('Brevo request error:', err);
+      }
+    }
+
+    if (!emailSent && resendApiKey && resendApiKey !== 'MY_RESEND_API_KEY') {
       try {
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -102,26 +138,69 @@ async function startServer() {
             'Authorization': `Bearer ${resendApiKey}`,
           },
           body: JSON.stringify({
-            from: 'Lewis Sales Assistant <onboarding@resend.dev>',
-            to: [identifier.trim()],
+            from: emailFrom.includes('@') ? emailFrom : 'Lewis Sales Assistant <onboarding@resend.dev>',
+            to: [email],
             subject: 'Your Lewis Sales Assistant Verification Code',
-            html: `<p>Your 6-digit verification code is: <strong>${otpCode}</strong></p><p>This code expires in 15 minutes.</p>`,
+            html: `<div style="font-family:sans-serif;padding:20px;background:#f8fafc;border-radius:12px;"><h2>Verification Code</h2><p>Your 6-digit verification code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px;color:#2563eb;">${code}</p><p>This code expires in 10 minutes. If you did not request this, please ignore.</p></div>`,
           }),
         });
-        if (!response.ok) {
-          console.warn('Resend email delivery failed, falling back to prototype mode:', await response.text());
+        if (response.ok) {
+          emailSent = true;
+        } else {
+          emailErrorMsg = await response.text();
+          console.warn('Resend email delivery failed:', emailErrorMsg);
         }
       } catch (err) {
-        console.warn('Resend email request error:', err);
+        console.warn('Resend request error:', err);
       }
     }
 
-    res.json({
-      success: true,
-      otpCode,
-      expiresAt,
-      mode: isEmail && resendApiKey && resendApiKey !== 'MY_RESEND_API_KEY' ? 'resend' : 'prototype',
-    });
+    if ((!brevoApiKey || brevoApiKey === 'MY_BREVO_API_KEY') && (!resendApiKey || resendApiKey === 'MY_RESEND_API_KEY')) {
+      res.status(503).json({
+        error: 'Email delivery service is not configured. Admin must add BREVO_API_KEY or RESEND_API_KEY in Settings > Secrets.',
+      });
+      return;
+    }
+
+    if (!emailSent && (brevoApiKey || resendApiKey)) {
+      res.status(502).json({ error: `Failed to send email via provider: ${emailErrorMsg || 'Unknown error'}` });
+      return;
+    }
+
+    const [local, domain] = email.split('@');
+    const maskedLocal = local.length <= 2 ? local + '***' : local.slice(0, 2) + '***';
+    const maskedEmail = `${maskedLocal}@${domain}`;
+
+    res.json({ success: true, maskedEmail });
+  });
+
+  app.post('/api/auth/verify-otp', async (req: Request, res: Response) => {
+    const { email: rawEmail, code } = req.body as { email?: string; code?: string };
+    const email = (rawEmail || '').trim().toLowerCase();
+    const cleanCode = (code || '').trim();
+
+    if (!email || !cleanCode) {
+      res.status(400).json({ error: 'Email and verification code are required.' });
+      return;
+    }
+
+    const record = otpStore.get(email);
+    if (!record || Date.now() > record.expiresAt || record.attempts >= 5) {
+      if (record) {
+        record.attempts++;
+      }
+      res.status(400).json({ error: 'Invalid or expired verification code.' });
+      return;
+    }
+
+    if (record.code !== cleanCode) {
+      record.attempts++;
+      res.status(400).json({ error: 'Invalid or expired verification code.' });
+      return;
+    }
+
+    otpStore.delete(email);
+    res.json({ success: true, verified: true });
   });
 
   app.post('/api/ocr-card', async (req: Request, res: Response) => {

@@ -782,7 +782,7 @@ export default function App() {
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 pb-safe"
         aria-label="Mobile bottom navigation"
       >
-        <div className={`grid grid-cols-${navItems.length} h-16`}>
+        <div className={`grid ${navItems.length === 5 ? 'grid-cols-5' : 'grid-cols-4'} h-16`}>
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (

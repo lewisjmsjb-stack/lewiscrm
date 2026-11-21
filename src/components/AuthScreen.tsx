@@ -55,7 +55,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   // 2-Step OTP state
   const [otpSent, setOtpSent] = useState<boolean>(false);
-  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+  const [maskedEmail, setMaskedEmail] = useState<string>('');
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState<string>('');
   const [userEnteredOtp, setUserEnteredOtp] = useState<string>('');
   const [pendingSignupUser, setPendingSignupUser] = useState<AppUser | null>(null);
   const [pendingForgotUserId, setPendingForgotUserId] = useState<string | null>(null);
@@ -70,6 +71,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setErrorMsg('');
     setSuccessMsg('');
     setUserEnteredOtp('');
+    setMaskedEmail('');
+    setPendingVerifyEmail('');
     setPendingSignupUser(null);
     setPendingForgotUserId(null);
     setShowSignInPassword(false);
@@ -123,8 +126,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setErrorMsg('Full name is required.');
       return;
     }
-    if (!email && !phone) {
-      setErrorMsg('Please provide either an email address or phone number.');
+    if (!email || !email.includes('@')) {
+      setErrorMsg('A valid email address is required for registration and OTP verification.');
       return;
     }
     if (!validatePassword(signUpPassword)) {
@@ -135,7 +138,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     const existing = users.find(
       (u) =>
         (email && normalizeEmail(u.email) === email) ||
-        (phone && normalizePhone(u.phone) === phone)
+        (phone && users.some((x) => identifiersMatch(x.email, x.phone, phone)))
     );
     if (existing) {
       setErrorMsg('An account with this email or phone number already exists. Please sign in.');
@@ -144,11 +147,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setIsLoading(true);
     try {
-      const identifier = email || phone;
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -164,7 +166,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         email,
         phone,
         passwordHash,
-        role: isManagerReq ? 'Employee' : 'Employee',
+        role: 'Employee',
         requestedRole: isManagerReq ? 'Manager' : undefined,
         requestedDepartment: isManagerReq ? signUpDepartment : undefined,
         verified: false,
@@ -173,10 +175,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       };
 
       setPendingSignupUser(newUser);
-      setGeneratedOtp(data.otpCode);
+      setPendingVerifyEmail(email);
+      setMaskedEmail(data.maskedEmail || email);
       setOtpSent(true);
       setUserEnteredOtp('');
-      setSuccessMsg(`Verification code sent to ${identifier}.`);
+      setSuccessMsg(`A 6-digit verification code has been sent to ${data.maskedEmail || email}.`);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Could not send verification code.');
     } finally {
@@ -184,26 +187,40 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     }
   };
 
-  const handleVerifyOtpForSignup = (e: React.FormEvent) => {
+  const handleVerifyOtpForSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    if (!userEnteredOtp.trim()) {
+    const code = userEnteredOtp.trim();
+    if (!code || code.length !== 6) {
       setErrorMsg('Please enter the 6-digit verification code.');
       return;
     }
-    if (userEnteredOtp.trim() !== generatedOtp) {
-      setErrorMsg('Invalid verification code. Please check the banner code or click Fill Code.');
-      return;
+    if (!pendingSignupUser || !pendingVerifyEmail) return;
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pendingVerifyEmail, code }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.verified) {
+        throw new Error(data.error || 'Invalid or expired verification code.');
+      }
+
+      const verifiedUser: AppUser = {
+        ...pendingSignupUser,
+        verified: true,
+      };
+
+      onRegisterUser(verifiedUser);
+      onLoginSuccess(verifiedUser.id);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Verification failed.');
+    } finally {
+      setIsLoading(false);
     }
-    if (!pendingSignupUser) return;
-
-    const verifiedUser: AppUser = {
-      ...pendingSignupUser,
-      verified: true,
-    };
-
-    onRegisterUser(verifiedUser);
-    onLoginSuccess(verifiedUser.id);
   };
 
   const handleSendOtpForForgot = async (e: React.FormEvent) => {
@@ -224,6 +241,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       return;
     }
 
+    if (!matchedUser.email || !matchedUser.email.includes('@')) {
+      setErrorMsg('This account does not have an email address on file for password reset. Please contact admin.');
+      return;
+    }
+
     if (!validatePassword(forgotNewPassword)) {
       setErrorMsg('New password must be at least 6 characters long.');
       return;
@@ -234,7 +256,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email: matchedUser.email }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -242,10 +264,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       }
 
       setPendingForgotUserId(matchedUser.id);
-      setGeneratedOtp(data.otpCode);
+      setPendingVerifyEmail(matchedUser.email);
+      setMaskedEmail(data.maskedEmail || matchedUser.email);
       setOtpSent(true);
       setUserEnteredOtp('');
-      setSuccessMsg(`Password reset verification code sent to ${identifier}.`);
+      setSuccessMsg(`Password reset code sent to ${data.maskedEmail || matchedUser.email}.`);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Could not send reset code.');
     } finally {
@@ -256,45 +279,64 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const handleVerifyOtpForForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    if (!userEnteredOtp.trim()) {
+    const code = userEnteredOtp.trim();
+    if (!code || code.length !== 6) {
       setErrorMsg('Please enter the 6-digit verification code.');
       return;
     }
-    if (userEnteredOtp.trim() !== generatedOtp) {
-      setErrorMsg('Invalid verification code. Please check the banner code or click Fill Code.');
-      return;
-    }
-    if (!pendingForgotUserId) return;
+    if (!pendingForgotUserId || !pendingVerifyEmail) return;
 
-    const newHash = await hashPassword(forgotNewPassword);
-    onUpdatePassword(pendingForgotUserId, newHash);
-    setSuccessMsg('Password successfully updated! You can now sign in.');
-    setOtpSent(false);
-    setMode('signin');
-    setForgotIdentifier('');
-    setForgotNewPassword('');
-    setUserEnteredOtp('');
-    setShowForgotNewPassword(false);
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pendingVerifyEmail, code }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.verified) {
+        throw new Error(data.error || 'Invalid or expired verification code.');
+      }
+
+      const newHash = await hashPassword(forgotNewPassword);
+      onUpdatePassword(pendingForgotUserId, newHash);
+      setSuccessMsg('Password successfully updated! You can now sign in.');
+      setOtpSent(false);
+      setMode('signin');
+      setForgotIdentifier('');
+      setForgotNewPassword('');
+      setUserEnteredOtp('');
+      setMaskedEmail('');
+      setPendingVerifyEmail('');
+      setShowForgotNewPassword(false);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Verification failed.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleResendCode = async () => {
     setErrorMsg('');
-    const identifier = mode === 'signup' ? signUpEmail || signUpPhone : forgotIdentifier;
-    if (!identifier) return;
+    if (!pendingVerifyEmail) return;
 
+    setIsLoading(true);
     try {
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email: pendingVerifyEmail }),
       });
       const data = await res.json();
-      if (res.ok && data.otpCode) {
-        setGeneratedOtp(data.otpCode);
-        setSuccessMsg(`New verification code sent to ${identifier}.`);
+      if (res.ok) {
+        setSuccessMsg(`New verification code sent to ${maskedEmail || pendingVerifyEmail}.`);
+      } else {
+        setErrorMsg(data.error || 'Failed to resend code.');
       }
     } catch {
       setErrorMsg('Failed to resend code.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -370,25 +412,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         {/* STEP 2: OTP VERIFICATION BOX */}
         {otpSent ? (
           <div className="space-y-5">
-            {/* Prominent Verification Banner with Fill Code Button */}
-            <div className="p-4 rounded-2xl bg-blue-950 border border-blue-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-blue-300">Verification Code Sent</span>
-                <button
-                  type="button"
-                  onClick={() => setUserEnteredOtp(generatedOtp)}
-                  className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-sm"
-                >
-                  Fill Code
-                </button>
-              </div>
-              <div className="text-center py-2 bg-slate-900/80 rounded-xl border border-blue-900">
-                <span className="font-mono text-2xl font-black tracking-widest text-emerald-400">
-                  {generatedOtp}
-                </span>
-              </div>
-              <p className="text-[11px] text-blue-200 text-center">
-                Tap &ldquo;Fill Code&rdquo; above or type the 6-digit code below.
+            <div className="p-4 rounded-2xl bg-blue-950/70 border border-blue-800/80 space-y-2 text-center">
+              <p className="text-xs font-semibold text-blue-200">
+                A 6-digit verification code has been sent to <span className="font-bold text-white">{maskedEmail}</span>. Please check your inbox and spam folder.
               </p>
             </div>
 
