@@ -166,7 +166,14 @@ async function startServer() {
       );
 
       const rawText = (response.text ?? '{}').trim();
-      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error('Failed to parse Gemini OCR JSON response:', rawText, parseErr);
+        res.status(502).json({ error: 'Model returned malformed JSON response for card OCR.' });
+        return;
+      }
 
       res.json({
         fullName: typeof parsed.fullName === 'string' ? parsed.fullName.trim() : '',
@@ -235,7 +242,7 @@ async function startServer() {
         `Rules:`,
         `1. exactCustomerWords: Capture faithfully what the customer said, asked, objected to, or requested. Do NOT invent prices, vehicle specifications, or commitments that were not stated.`,
         `2. nextStep: Clear, concrete next action for the sales manager (e.g., "Send 14ft Thermo King quote on WhatsApp", "Call back to confirm trade-in inspection").`,
-        `3. suggestedNextDate: Format YYYY-MM-DD based on today (${safeToday}). Resolve relative dates like "tomorrow", "next Monday", "in 3 days". If no specific date is mentioned and channel is Visit/Meeting, default to the next calendar day after ${safeToday}. If none mentioned for other channels, return the next calendar day after ${safeToday}.`,
+        `3. suggestedNextDate: Format YYYY-MM-DD based on today (${safeToday}). Resolve relative dates like "tomorrow", "next Monday", "in 3 days". If no specific date is mentioned, default to the next calendar day after ${safeToday}.`,
       ];
 
       parts.push({ text: promptLines.join('\n') });
@@ -271,7 +278,14 @@ async function startServer() {
       );
 
       const rawText = (response.text ?? '{}').trim();
-      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error('Failed to parse Gemini follow-up JSON response:', rawText, parseErr);
+        res.status(502).json({ error: 'Model returned malformed JSON response for follow-up extraction.' });
+        return;
+      }
 
       res.json({
         exactCustomerWords:

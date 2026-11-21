@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Database,
+  Loader2,
   Users,
 } from 'lucide-react';
 import {
@@ -13,9 +14,9 @@ import {
   FollowUp,
   FollowUpChannel,
 } from './types';
-import { createSeedState } from './data/seedData';
 import { generateId, getTodayIso } from './utils/helpers';
 import { CsvImportPreviewRow } from './utils/csv';
+import { loadAppStateFromIDB, saveAppStateToIDB } from './utils/storage';
 import { TodayView } from './components/TodayView';
 import { SaveCardPayload, ScanCardView } from './components/ScanCardView';
 import { CustomersView } from './components/CustomersView';
@@ -23,31 +24,13 @@ import { CustomerDetailView } from './components/CustomerDetailView';
 import { DataView } from './components/DataView';
 import { FollowUpModal } from './components/FollowUpModal';
 
-const STORAGE_KEY = 'lewis_sales_assistant_state_v1';
-
-function loadInitialState(): AppState {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createSeedState();
-    const parsed = JSON.parse(raw) as Partial<AppState>;
-    if (!Array.isArray(parsed.customers) || !Array.isArray(parsed.followUps)) {
-      return createSeedState();
-    }
-    return {
-      customers: parsed.customers,
-      followUps: parsed.followUps,
-      expiryActions:
-        parsed.expiryActions && typeof parsed.expiryActions === 'object'
-          ? parsed.expiryActions
-          : {},
-    };
-  } catch {
-    return createSeedState();
-  }
-}
-
 export default function App() {
-  const [state, setState] = useState<AppState>(() => loadInitialState());
+  const [state, setState] = useState<AppState>({
+    customers: [],
+    followUps: [],
+    expiryActions: {},
+  });
+  const [isHydrating, setIsHydrating] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string>('');
@@ -60,15 +43,35 @@ export default function App() {
     nextStep?: string;
   }>({});
 
-  // Persist to localStorage whenever state updates
+  // Initial load from IndexedDB (with localStorage migration and seed fallback)
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // Storage quota safeguard — notify user softly if too many large images accumulate
+    let isMounted = true;
+    loadAppStateFromIDB()
+      .then((loadedState) => {
+        if (isMounted) {
+          setState(loadedState);
+          setIsHydrating(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load initial state from IndexedDB:', err);
+        if (isMounted) {
+          setIsHydrating(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Save state to IndexedDB whenever state updates (after initial hydration)
+  useEffect(() => {
+    if (isHydrating) return;
+    saveAppStateToIDB(state).catch(() => {
       setToastMessage('Browser storage is nearly full. Export a JSON backup in Data.');
-    }
-  }, [state]);
+    });
+  }, [state, isHydrating]);
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -226,7 +229,6 @@ export default function App() {
       return payload.existingCustomerId;
     }
 
-    // Check if an existing company matches by exact case-insensitive company name when saving as new contact
     const normalizedCompany = payload.companyName.trim().toLowerCase();
     const existingByCompany = normalizedCompany
       ? state.customers.find(
@@ -316,52 +318,75 @@ export default function App() {
     let merged = 0;
     let skipped = 0;
 
-    setState((prev) => {
-      const nextCustomers = prev.customers.map((c) => ({
-        ...c,
-        contacts: [...c.contacts],
-        tags: [...c.tags],
-      }));
+    const nextCustomers = state.customers.map((c) => ({
+      ...c,
+      contacts: c.contacts.map((ct) => ({ ...ct })),
+      tags: [...c.tags],
+      vehicles: c.vehicles.map((v) => ({ ...v })),
+    }));
 
-      for (const row of rows) {
-        if (row.action === 'skip') {
-          skipped++;
+    for (const row of rows) {
+      if (row.action === 'skip') {
+        skipped++;
+        continue;
+      }
+
+      if (row.action === 'merge' && row.duplicateMatch) {
+        const targetCust = nextCustomers.find(
+          (c) => c.id === row.duplicateMatch!.customer.id
+        );
+        if (targetCust) {
+          targetCust.uen = targetCust.uen || row.uen;
+          targetCust.address = targetCust.address || row.address;
+          targetCust.industry = targetCust.industry || row.industry;
+          targetCust.business = targetCust.business || row.business;
+          targetCust.fleetSize = targetCust.fleetSize || row.fleetSize;
+          targetCust.updatedAt = today;
+          const targetCt = targetCust.contacts.find(
+            (ct) => ct.id === row.duplicateMatch!.contact.id
+          );
+          if (targetCt) {
+            targetCt.fullName = targetCt.fullName || row.fullName;
+            targetCt.title = targetCt.title || row.title;
+            targetCt.email = targetCt.email || row.email;
+            targetCt.notes = targetCt.notes || row.notes;
+          }
+          merged++;
           continue;
         }
+      }
 
-        if (row.action === 'merge' && row.duplicateMatch) {
-          const targetCust = nextCustomers.find(
-            (c) => c.id === row.duplicateMatch!.customer.id
-          );
-          if (targetCust) {
-            targetCust.uen = targetCust.uen || row.uen;
-            targetCust.address = targetCust.address || row.address;
-            targetCust.industry = targetCust.industry || row.industry;
-            targetCust.business = targetCust.business || row.business;
-            targetCust.fleetSize = targetCust.fleetSize || row.fleetSize;
-            targetCust.updatedAt = today;
-            const targetCt = targetCust.contacts.find(
-              (ct) => ct.id === row.duplicateMatch!.contact.id
-            );
-            if (targetCt) {
-              targetCt.fullName = targetCt.fullName || row.fullName;
-              targetCt.title = targetCt.title || row.title;
-              targetCt.email = targetCt.email || row.email;
-              targetCt.notes = targetCt.notes || row.notes;
+      // Create new account or attach contact to existing company by name with duplicate contact check
+      const existingCompany = nextCustomers.find(
+        (c) =>
+          c.companyName.trim().toLowerCase() === row.companyName.trim().toLowerCase()
+      );
+
+      if (existingCompany) {
+        if (row.fullName || row.phone || row.email) {
+          const normNewName = (row.fullName || '').trim().toLowerCase();
+          const normNewEmail = (row.email || '').trim().toLowerCase();
+          const matchingContact = existingCompany.contacts.find((ct) => {
+            const normExistingName = ct.fullName.trim().toLowerCase();
+            const normExistingEmail = ct.email.trim().toLowerCase();
+            if (normNewName && normExistingName && normNewName === normExistingName) {
+              return true;
             }
-            merged++;
-            continue;
-          }
-        }
+            if (normNewEmail && normExistingEmail && normNewEmail === normExistingEmail) {
+              return true;
+            }
+            return false;
+          });
 
-        // Create new account or attach contact to existing company by name
-        const existingCompany = nextCustomers.find(
-          (c) =>
-            c.companyName.trim().toLowerCase() === row.companyName.trim().toLowerCase()
-        );
-
-        if (existingCompany) {
-          if (row.fullName || row.phone) {
+          if (matchingContact) {
+            matchingContact.title = matchingContact.title || row.title;
+            matchingContact.phone = matchingContact.phone || row.phone;
+            matchingContact.email = matchingContact.email || row.email;
+            matchingContact.notes = [matchingContact.notes, row.notes]
+              .filter(Boolean)
+              .join(' | ');
+            if (row.isDecisionMaker) matchingContact.isDecisionMaker = true;
+          } else {
             existingCompany.contacts.push({
               id: generateId('ct'),
               fullName: row.fullName || 'Imported Contact',
@@ -374,61 +399,74 @@ export default function App() {
               addedAt: today,
             });
           }
-          existingCompany.updatedAt = today;
-          created++;
-        } else {
-          nextCustomers.unshift({
-            id: generateId('cust'),
-            companyName: row.companyName,
-            uen: row.uen,
-            address: row.address,
-            area: row.area,
-            industry: row.industry,
-            business: row.business,
-            fleetSize: row.fleetSize,
-            grade: row.grade,
-            status: row.status,
-            riskLight: row.riskLight,
-            sourceTag: row.sourceTag,
-            tags: row.tags,
-            notes: row.notes,
-            contacts:
-              row.fullName || row.phone
-                ? [
-                    {
-                      id: generateId('ct'),
-                      fullName: row.fullName || 'Primary Contact',
-                      title: row.title,
-                      phone: row.phone,
-                      email: row.email,
-                      isDecisionMaker: row.isDecisionMaker,
-                      sourceTag: row.sourceTag,
-                      notes: row.notes,
-                      addedAt: today,
-                    },
-                  ]
-                : [],
-            vehicles: [],
-            createdAt: today,
-            updatedAt: today,
-          });
-          created++;
         }
+        existingCompany.updatedAt = today;
+        created++;
+      } else {
+        nextCustomers.unshift({
+          id: generateId('cust'),
+          companyName: row.companyName,
+          uen: row.uen,
+          address: row.address,
+          area: row.area,
+          industry: row.industry,
+          business: row.business,
+          fleetSize: row.fleetSize,
+          grade: row.grade,
+          status: row.status,
+          riskLight: row.riskLight,
+          sourceTag: row.sourceTag,
+          tags: row.tags,
+          notes: row.notes,
+          contacts:
+            row.fullName || row.phone || row.email
+              ? [
+                  {
+                    id: generateId('ct'),
+                    fullName: row.fullName || 'Primary Contact',
+                    title: row.title,
+                    phone: row.phone,
+                    email: row.email,
+                    isDecisionMaker: row.isDecisionMaker,
+                    sourceTag: row.sourceTag,
+                    notes: row.notes,
+                    addedAt: today,
+                  },
+                ]
+              : [],
+          vehicles: [],
+          createdAt: today,
+          updatedAt: today,
+        });
+        created++;
       }
+    }
 
-      return { ...prev, customers: nextCustomers };
-    });
-
+    setState((prev) => ({ ...prev, customers: nextCustomers }));
     showToast(`CSV imported: ${created} added, ${merged} merged.`);
     return { created, merged, skipped };
   };
 
   const handleResetSampleData = () => {
-    const seed = createSeedState();
-    setState(seed);
-    setSelectedCustomerId(null);
-    showToast('Sample fleet CRM data restored.');
+    // Import createSeedState dynamically or load
+    import('./data/seedData').then(({ createSeedState }) => {
+      const seed = createSeedState();
+      setState(seed);
+      setSelectedCustomerId(null);
+      showToast('Sample fleet CRM data restored.');
+    });
   };
+
+  if (isHydrating) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-700" />
+          <p className="text-sm font-semibold text-slate-700">Loading Lewis Sales Assistant...</p>
+        </div>
+      </div>
+    );
+  }
 
   const selectedCustomer = selectedCustomerId
     ? state.customers.find((c) => c.id === selectedCustomerId) || null
