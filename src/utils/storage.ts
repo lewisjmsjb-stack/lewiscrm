@@ -1,4 +1,4 @@
-import { AppState, AppUser } from '../types';
+import { AppState, AppUser, Customer, FollowUp } from '../types';
 import { createSeedState } from '../data/seedData';
 import { hashPassword } from './auth';
 
@@ -48,7 +48,38 @@ export function openIndexedDB(): Promise<IDBDatabase> {
   });
 }
 
+const sampleCustomerIds = new Set(['cust_pacific_cold', 'cust_senoko_fresh', 'cust_tuas_cryopharma', 'cust_changi_aero']);
+const sampleCompanySubstrings = ['pacific cold', 'senoko fresh', 'tuas cryopharma', 'changi aerocatering'];
+
+function cleanSampleData(customers: Customer[], followUps: FollowUp[]): { customers: Customer[]; followUps: FollowUp[]; changed: boolean } {
+  let changed = false;
+  const filteredCustomers = customers.filter((c) => {
+    const isSampleId = sampleCustomerIds.has(c.id);
+    const nameLower = (c.companyName || '').toLowerCase();
+    const isSampleName = sampleCompanySubstrings.some((sub) => nameLower.includes(sub));
+    if (isSampleId || isSampleName) {
+      changed = true;
+      return false;
+    }
+    return true;
+  });
+
+  const validCustomerIds = new Set(filteredCustomers.map((c) => c.id));
+  const filteredFollowUps = followUps.filter((f) => {
+    if (!validCustomerIds.has(f.customerId)) {
+      changed = true;
+      return false;
+    }
+    return true;
+  });
+
+  return { customers: filteredCustomers, followUps: filteredFollowUps, changed };
+}
+
 export async function loadAppStateFromIDB(): Promise<AppState> {
+  const defaultAdmin = await createDefaultAdminUser();
+  const seed = createSeedState();
+
   try {
     const db = await openIndexedDB();
     const state = await new Promise<AppState | undefined>((resolve, reject) => {
@@ -60,12 +91,9 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
       request.onsuccess = () => resolve(request.result as AppState | undefined);
     });
 
-    const defaultAdmin = await createDefaultAdminUser();
-
     if (state && Array.isArray(state.customers) && Array.isArray(state.followUps)) {
       let users = Array.isArray(state.users) && state.users.length > 0 ? state.users : [defaultAdmin];
 
-      // One-time cleanup: migrate any lewisls.jmsjb@gmail.com -> lewis.jmsjb@gmail.com and remove duplicates
       let hasChanges = false;
       const seenEmails = new Set<string>();
       const cleanedUsers: AppUser[] = [];
@@ -77,7 +105,6 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
           hasChanges = true;
         }
         if (email && seenEmails.has(email)) {
-          // duplicate user with legacy email, skip
           hasChanges = true;
           continue;
         }
@@ -96,10 +123,14 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
         hasChanges = true;
       }
 
-      let userProfile = state.userProfile;
+      const { customers: cleanedCustomers, followUps: cleanedFollowUps, changed: sampleCleaned } = cleanSampleData(state.customers, state.followUps);
+      if (sampleCleaned) {
+        hasChanges = true;
+      }
+
+      let userProfile = state.userProfile || seed.userProfile;
       if (userProfile && (userProfile.email || '').trim().toLowerCase() === 'lewisls.jmsjb@gmail.com') {
         userProfile = { ...userProfile, email: 'lewis.jmsjb@gmail.com' };
-        hasChanges = true;
       }
 
       const currentUserId = state.currentUserId !== undefined ? state.currentUserId : null;
@@ -108,6 +139,8 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
         userProfile,
         users: cleanedUsers,
         currentUserId,
+        customers: cleanedCustomers,
+        followUps: cleanedFollowUps,
       };
 
       if (hasChanges) {
@@ -129,12 +162,14 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
             return { ...u, email };
           });
 
+          const { customers: cleanedCustomers, followUps: cleanedFollowUps } = cleanSampleData(parsed.customers, parsed.followUps);
+
           const migratedState: AppState = {
-            userProfile: parsed.userProfile,
+            userProfile: parsed.userProfile || seed.userProfile,
             users,
             currentUserId: parsed.currentUserId !== undefined ? parsed.currentUserId : null,
-            customers: parsed.customers,
-            followUps: parsed.followUps,
+            customers: cleanedCustomers,
+            followUps: cleanedFollowUps,
             expiryActions:
               parsed.expiryActions && typeof parsed.expiryActions === 'object'
                 ? parsed.expiryActions
@@ -150,7 +185,6 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
       window.localStorage.removeItem(LOCALSTORAGE_KEY);
     }
 
-    const seed = createSeedState();
     const initialState: AppState = {
       ...seed,
       users: [defaultAdmin],
@@ -160,7 +194,6 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
     return initialState;
   } catch (err) {
     console.warn('IndexedDB load failed, falling back to seed/localStorage:', err);
-    const defaultAdmin = await createDefaultAdminUser();
     const legacyRaw = window.localStorage.getItem(LOCALSTORAGE_KEY);
     if (legacyRaw) {
       try {
@@ -171,12 +204,13 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
             ...u,
             email: (u.email || '').trim().toLowerCase() === 'lewisls.jmsjb@gmail.com' ? 'lewis.jmsjb@gmail.com' : u.email,
           }));
+          const { customers: cleanedCustomers, followUps: cleanedFollowUps } = cleanSampleData(parsed.customers, parsed.followUps);
           return {
-            userProfile: parsed.userProfile,
+            userProfile: parsed.userProfile || seed.userProfile,
             users,
             currentUserId: parsed.currentUserId !== undefined ? parsed.currentUserId : null,
-            customers: parsed.customers,
-            followUps: parsed.followUps,
+            customers: cleanedCustomers,
+            followUps: cleanedFollowUps,
             expiryActions:
               parsed.expiryActions && typeof parsed.expiryActions === 'object'
                 ? parsed.expiryActions
@@ -187,7 +221,6 @@ export async function loadAppStateFromIDB(): Promise<AppState> {
         // ignore
       }
     }
-    const seed = createSeedState();
     return {
       ...seed,
       users: [defaultAdmin],

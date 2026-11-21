@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   Upload,
 } from 'lucide-react';
-import { AppState, Customer } from '../types';
+import { AppState, AppUser, Customer } from '../types';
 import {
   CsvImportPreviewRow,
   downloadTextFile,
@@ -21,18 +21,20 @@ import { getTodayIso } from '../utils/helpers';
 
 interface DataViewProps {
   state: AppState;
+  currentUser: AppUser;
   onCommitCsvImport: (rows: CsvImportPreviewRow[]) => {
     created: number;
     merged: number;
     skipped: number;
   };
-  onResetSampleData: () => void;
+  onClearAllData: () => void;
 }
 
 export const DataView: React.FC<DataViewProps> = ({
   state,
+  currentUser,
   onCommitCsvImport,
-  onResetSampleData,
+  onClearAllData,
 }) => {
   const today = getTodayIso();
   const csvInputRef = useRef<HTMLInputElement | null>(null);
@@ -371,52 +373,38 @@ export const DataView: React.FC<DataViewProps> = ({
         </section>
       )}
 
-      {/* Data Safety & Reset Sample Data */}
+      {/* Data Safety & Clear All CRM Data */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl bg-red-50 text-red-700 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-900">Local Storage & Sample Reset</h2>
+            <h2 className="text-base font-bold text-slate-900">Clear All CRM Data</h2>
             <p className="text-xs text-slate-600 mt-0.5 max-w-xl leading-relaxed">
-              All customers, business card images, fleet expiries, and follow-ups save automatically to this browser&apos;s localStorage. Reset restores the 4 commercial cold-chain &amp; EV fleet sample accounts.
+              Permanently delete all customers, contacts, fleet units, and follow-ups. User accounts and profile are preserved. This action cannot be undone.
             </p>
           </div>
         </div>
 
         <div className="shrink-0">
-          {!confirmingReset ? (
+          {currentUser.role === 'Admin' ? (
             <button
               type="button"
-              onClick={() => setConfirmingReset(true)}
-              className="min-h-[44px] px-4 py-2 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-2 whitespace-nowrap"
+              onClick={() => {
+                if (window.confirm('Are you sure you want to clear all CRM customers, contacts, and follow-ups? This cannot be undone.')) {
+                  onClearAllData();
+                  setPreviewRows([]);
+                  setImportBanner('All CRM data has been cleared.');
+                }
+              }}
+              className="min-h-[44px] px-4 py-2 rounded-xl border border-red-200 bg-red-600 text-white text-xs font-semibold hover:bg-red-700 inline-flex items-center gap-2 whitespace-nowrap"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>Reset Sample Data</span>
+              <span>Clear All CRM Data</span>
             </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmingReset(false)}
-                className="min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetSampleData();
-                  setConfirmingReset(false);
-                  setPreviewRows([]);
-                  setImportBanner('Restored the 4 sample commercial fleet accounts and follow-ups.');
-                }}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap"
-              >
-                Confirm Reset
-              </button>
-            </div>
+            <span className="text-xs text-slate-500 font-medium">Admin access required to clear data</span>
           )}
         </div>
       </section>

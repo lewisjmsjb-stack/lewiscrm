@@ -559,18 +559,19 @@ export default function App() {
     return { created, merged, skipped };
   };
 
-  const handleResetSampleData = () => {
-    import('./data/seedData').then(({ createSeedState }) => {
-      const seed = createSeedState();
-      setState((prev) => ({
-        ...prev,
-        customers: seed.customers,
-        followUps: seed.followUps,
-        expiryActions: {},
-      }));
-      setSelectedCustomerId(null);
-      showToast('Sample fleet CRM data restored.');
-    });
+  const handleClearAllData = () => {
+    if (currentUser?.role !== 'Admin') {
+      showToast('Unauthorized: Admin access required.');
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      customers: [],
+      followUps: [],
+      expiryActions: {},
+    }));
+    setSelectedCustomerId(null);
+    showToast('All CRM data cleared successfully.');
   };
 
   if (isHydrating) {
@@ -771,8 +772,9 @@ export default function App() {
         {activeTab === 'data' && (
           <DataView
             state={{ ...state, customers: visibleCustomers, followUps: visibleFollowUps }}
+            currentUser={currentUser}
             onCommitCsvImport={handleCommitCsvImport}
-            onResetSampleData={handleResetSampleData}
+            onClearAllData={handleClearAllData}
           />
         )}
       </main>

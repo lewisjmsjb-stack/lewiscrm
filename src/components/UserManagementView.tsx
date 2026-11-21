@@ -45,7 +45,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
   const [newName, setNewName] = useState<string>('');
   const [newEmail, setNewEmail] = useState<string>('');
   const [newPhone, setNewPhone] = useState<string>('');
-  const [newPassword, setNewPassword] = useState<string>('Welcome1');
+  const [newPassword, setNewPassword] = useState<string>('');
   const [showNewPassword, setShowNewPassword] = useState<boolean>(false);
   const [newRole, setNewRole] = useState<UserRole>('Employee');
   const [newDepartment, setNewDepartment] = useState<ManagerDepartment>('Sales Manager');
@@ -119,7 +119,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
     setNewName('');
     setNewEmail('');
     setNewPhone('');
-    setNewPassword('Welcome1');
+    setNewPassword('');
     setShowNewPassword(false);
     showToast(`Created user ${created.fullName}.`);
   };
@@ -224,7 +224,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
           type="button"
           onClick={() => {
             setIsCreateOpen(true);
-            setNewPassword('Welcome1');
+            setNewPassword('');
             setShowNewPassword(false);
           }}
           className="min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-700 text-white text-sm font-semibold hover:bg-blue-800 inline-flex items-center gap-2 whitespace-nowrap transition-colors"
