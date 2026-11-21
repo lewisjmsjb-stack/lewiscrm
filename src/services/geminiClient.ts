@@ -1,5 +1,19 @@
 import { FollowUpChannel, FollowUpExtractionResult, OcrCardResult } from '../types';
 
+export interface DocumentField {
+  label: string;
+  value: string;
+}
+
+export interface DocumentAnalysisResult {
+  documentType: string;
+  summary: string;
+  answer: string;
+  extractedFields: DocumentField[];
+  risksAndFlags: string[];
+  suggestedNextStep: string;
+}
+
 export async function extractBusinessCardOcr(
   imageDataUrl: string,
   mimeType = 'image/jpeg'
@@ -61,5 +75,59 @@ export async function extractFollowUpFromInput(params: {
     exactCustomerWords: data.exactCustomerWords || '',
     nextStep: data.nextStep || '',
     suggestedNextDate: data.suggestedNextDate || '',
+  };
+}
+
+export async function checkAiHealth(): Promise<{
+  ok: boolean;
+  model: string;
+  emailConfigured: boolean;
+  geminiConfigured: boolean;
+}> {
+  try {
+    const res = await fetch('/api/health');
+    const raw = await res.text();
+    if (!res.ok || raw.trim().startsWith('<')) {
+      return { ok: false, model: '', emailConfigured: false, geminiConfigured: false };
+    }
+    const data = JSON.parse(raw);
+    return {
+      ok: Boolean(data.ok),
+      model: data.model || '',
+      emailConfigured: Boolean(data.emailConfigured),
+      geminiConfigured: Boolean(data.geminiConfigured),
+    };
+  } catch {
+    return { ok: false, model: '', emailConfigured: false, geminiConfigured: false };
+  }
+}
+
+export async function analyzeUploadedDocument(params: {
+  fileBase64: string;
+  mimeType: string;
+  fileName?: string;
+  question?: string;
+}): Promise<DocumentAnalysisResult> {
+  const response = await fetch('/api/analyze-document', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as Partial<DocumentAnalysisResult> & {
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(data.error || `Document analysis failed (${response.status}).`);
+  }
+
+  return {
+    documentType: data.documentType || 'General Document',
+    summary: data.summary || '',
+    answer: data.answer || '',
+    extractedFields: Array.isArray(data.extractedFields) ? data.extractedFields : [],
+    risksAndFlags: Array.isArray(data.risksAndFlags) ? data.risksAndFlags : [],
+    suggestedNextStep: data.suggestedNextStep || '',
   };
 }

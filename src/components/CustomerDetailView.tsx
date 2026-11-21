@@ -10,6 +10,7 @@ import {
   Phone,
   Plus,
   RotateCcw,
+  Sparkles,
   Truck,
   UserPlus,
   X,
@@ -55,6 +56,7 @@ interface CustomerDetailViewProps {
     nextStep?: string;
   }) => void;
   onToggleFollowUpDone: (followUpId: string) => void;
+  onOpenDocAnalyzer?: (customerId: string) => void;
 }
 
 export const CustomerDetailView: React.FC<CustomerDetailViewProps> = ({
@@ -65,6 +67,7 @@ export const CustomerDetailView: React.FC<CustomerDetailViewProps> = ({
   onUpdateCustomer,
   onOpenNewFollowUp,
   onToggleFollowUpDone,
+  onOpenDocAnalyzer,
 }) => {
   const today = getTodayIso();
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -288,6 +291,15 @@ export const CustomerDetailView: React.FC<CustomerDetailViewProps> = ({
 
           {/* Inline Grade / Status / Risk Controls + Primary Follow-Up CTA */}
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenDocAnalyzer?.(customer.id)}
+              className="min-h-[42px] px-3.5 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>AI Analyze Doc / Photo</span>
+            </button>
+
             <select
               aria-label="Customer grade"
               value={customer.grade}

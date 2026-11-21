@@ -7,6 +7,7 @@ import {
   Loader2,
   LogOut,
   Shield,
+  Sparkles,
   Users,
 } from 'lucide-react';
 import {
@@ -28,6 +29,7 @@ import { DataView } from './components/DataView';
 import { FollowUpModal } from './components/FollowUpModal';
 import { AuthScreen } from './components/AuthScreen';
 import { UserManagementView } from './components/UserManagementView';
+import { DocumentAnalyzerModal } from './components/DocumentAnalyzerModal';
 
 export default function App() {
   const [state, setState] = useState<AppState>({
@@ -574,6 +576,51 @@ export default function App() {
     showToast('All CRM data cleared successfully.');
   };
 
+  const [docAnalyzerOpen, setDocAnalyzerOpen] = useState<boolean>(false);
+  const [docAnalyzerCustomerId, setDocAnalyzerCustomerId] = useState<string | null>(null);
+
+  const handleSaveDocumentAnalysisToCustomer = (
+    customerId: string,
+    summaryText: string,
+    followUpTask?: { nextStep: string; date: string }
+  ) => {
+    const today = getTodayIso();
+    setState((prev) => {
+      const updatedCustomers = prev.customers.map((c) => {
+        if (c.id !== customerId) return c;
+        const updatedNotes = c.notes ? `${c.notes}\n\n${summaryText}` : summaryText;
+        return {
+          ...c,
+          notes: updatedNotes,
+          updatedAt: today,
+        };
+      });
+
+      let updatedFollowUps = prev.followUps;
+      if (followUpTask) {
+        const newFu: FollowUp = {
+          id: generateId('fu'),
+          ownerUserId: currentUser?.id,
+          customerId,
+          channel: 'Visit',
+          exactCustomerWords: summaryText.slice(0, 220),
+          nextStep: followUpTask.nextStep,
+          nextStepDate: followUpTask.date,
+          status: 'Pending',
+          createdAt: today,
+        };
+        updatedFollowUps = [newFu, ...updatedFollowUps];
+      }
+
+      return {
+        ...prev,
+        customers: updatedCustomers,
+        followUps: updatedFollowUps,
+      };
+    });
+    showToast('Saved AI analysis to customer record.');
+  };
+
   if (isHydrating) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -701,6 +748,18 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => {
+                setDocAnalyzerCustomerId(null);
+                setDocAnalyzerOpen(true);
+              }}
+              className="min-h-[40px] px-3.5 md:px-4 py-2 rounded-xl bg-purple-700 text-white text-xs md:text-sm font-semibold hover:bg-purple-800 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors shadow-sm"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>AI Analyze</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => handleTabChange('scan')}
               className="min-h-[40px] px-3.5 md:px-4 py-2 rounded-xl bg-blue-700 text-white text-xs md:text-sm font-semibold hover:bg-blue-800 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
             >
@@ -754,6 +813,10 @@ export default function App() {
             onUpdateCustomer={handleUpdateCustomer}
             onOpenNewFollowUp={handleOpenNewFollowUp}
             onToggleFollowUpDone={handleToggleFollowUpDone}
+            onOpenDocAnalyzer={(id) => {
+              setDocAnalyzerCustomerId(id);
+              setDocAnalyzerOpen(true);
+            }}
           />
         )}
 
@@ -815,6 +878,16 @@ export default function App() {
         initialNextStep={followUpPrefill.nextStep}
         onClose={() => setFollowUpModalOpen(false)}
         onSave={handleSaveFollowUp}
+      />
+
+      {/* Universal AI Document & Image Analyzer Modal */}
+      <DocumentAnalyzerModal
+        isOpen={docAnalyzerOpen}
+        customers={visibleCustomers}
+        initialCustomerId={docAnalyzerCustomerId}
+        onClose={() => setDocAnalyzerOpen(false)}
+        onSaveToCustomer={handleSaveDocumentAnalysisToCustomer}
+        showToast={showToast}
       />
 
       {/* Non-intrusive Toast Notification */}

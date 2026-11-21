@@ -83,6 +83,7 @@ async function startServer() {
       ok: true,
       model: MODEL_NAME,
       emailConfigured: Boolean(process.env.BREVO_API_KEY || process.env.RESEND_API_KEY),
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'),
     });
   });
 
@@ -455,6 +456,130 @@ async function startServer() {
           /^\d{4}-\d{2}-\d{2}$/.test(parsed.suggestedNextDate.trim())
             ? parsed.suggestedNextDate.trim()
             : '',
+      });
+    } catch (err: unknown) {
+      const { status, message } = formatGeminiError(err);
+      res.status(status).json({ error: message });
+    }
+  });
+
+  app.post('/api/analyze-document', async (req: Request, res: Response) => {
+    try {
+      const { fileBase64, mimeType, fileName, question } = req.body as {
+        fileBase64?: string;
+        mimeType?: string;
+        fileName?: string;
+        question?: string;
+      };
+
+      if (!fileBase64 || typeof fileBase64 !== 'string') {
+        res.status(400).json({ error: 'Missing fileBase64 payload.' });
+        return;
+      }
+
+      const safeMime = typeof mimeType === 'string' && mimeType.trim() ? mimeType.trim() : 'application/pdf';
+      const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+
+      const parts: Array<{ inlineData: { mimeType: string; data: string } } | { text: string }> = [];
+
+      if (safeMime.startsWith('text/')) {
+        const decodedText = Buffer.from(cleanBase64, 'base64').toString('utf8');
+        parts.push({
+          text: `Document Name: ${fileName || 'Uploaded text document'}\nContent:\n"""\n${decodedText}\n"""`,
+        });
+      } else {
+        parts.push({
+          inlineData: {
+            mimeType: safeMime,
+            data: cleanBase64,
+          },
+        });
+      }
+
+      const promptLines = [
+        `You are an expert AI document and image analyzer for a commercial vehicle and cold-chain sales manager (Lewis Sales Assistant).`,
+        `Analyze the attached document or image thoroughly (supporting both English and Chinese 简体中文/繁體中文).`,
+        question ? `User specific question or instruction: "${question.trim()}"` : `Provide a comprehensive analysis of the document/image, extracting key commercial facts, vehicle/reefer specs, pricing, dates, and risks.`,
+        `STRICT COMPLIANCE RED LINE: Only report facts, prices, dates, UENs, plate numbers, and technical specs visibly present in the uploaded file. NEVER guess, estimate, or fabricate missing numbers or specs—write "Not seen" if something is absent.`,
+      ];
+
+      parts.push({ text: promptLines.join('\n') });
+
+      const ai = getGeminiClient();
+
+      const response = await withRetry(() =>
+        ai.models.generateContent({
+          model: MODEL_NAME,
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                documentType: {
+                  type: Type.STRING,
+                  description: 'Category of document or image (e.g. Competitor Quotation, ACRA BizFile, LTA Vehicle Log Card, Truck / Reefer Photo, Invoice / Contract, General Document)',
+                },
+                summary: {
+                  type: Type.STRING,
+                  description: 'Clear, concise summary of what the document or image shows.',
+                },
+                answer: {
+                  type: Type.STRING,
+                  description: 'Direct answer to the user question, or key takeaways if no specific question was asked.',
+                },
+                extractedFields: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      label: { type: Type.STRING },
+                      value: { type: Type.STRING },
+                    },
+                    required: ['label', 'value'],
+                  },
+                  description: 'Key-value pairs covering company names, UEN, contact persons, phone numbers, plate numbers, vehicle/reefer models, prices, payment terms, and expiry dates found.',
+                },
+                risksAndFlags: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Red flags such as overdue dates, missing specifications, payment term risks, or items needing verification.',
+                },
+                suggestedNextStep: {
+                  type: Type.STRING,
+                  description: 'Recommended concrete sales or follow-up action for the sales manager.',
+                },
+              },
+              required: ['documentType', 'summary', 'answer', 'extractedFields', 'risksAndFlags', 'suggestedNextStep'],
+            },
+          },
+        })
+      );
+
+      const rawText = (response.text ?? '{}').trim();
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error('Failed to parse Gemini document analysis JSON:', rawText, parseErr);
+        res.status(502).json({ error: 'Model returned malformed JSON response for document analysis.' });
+        return;
+      }
+
+      res.json({
+        documentType: typeof parsed.documentType === 'string' ? parsed.documentType.trim() : 'General Document',
+        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+        answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
+        extractedFields: Array.isArray(parsed.extractedFields)
+          ? parsed.extractedFields.map((f: any) => ({
+              label: typeof f?.label === 'string' ? f.label.trim() : 'Field',
+              value: typeof f?.value === 'string' ? f.value.trim() : 'Not seen',
+            }))
+          : [],
+        risksAndFlags: Array.isArray(parsed.risksAndFlags)
+          ? parsed.risksAndFlags.map((r: any) => String(r).trim()).filter(Boolean)
+          : [],
+        suggestedNextStep: typeof parsed.suggestedNextStep === 'string' ? parsed.suggestedNextStep.trim() : '',
       });
     } catch (err: unknown) {
       const { status, message } = formatGeminiError(err);
