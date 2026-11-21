@@ -1,0 +1,6 @@
+{
+  "name": "Lewis Sales Assistant",
+  "description": "Mobile-first field sales CRM for commercial vehicle and cold-chain fleet managers with Gemini business card OCR, voice follow-up extraction, customer 360° files, and vehicle expiry timelines.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
